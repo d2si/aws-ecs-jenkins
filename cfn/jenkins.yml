@@ -10,15 +10,9 @@ Parameters:
     Type: String
     Default: "eu-west-1"
 
-  AvailabilityZone1:
-    Type: "AWS::EC2::AvailabilityZone::Name"
-    Description: "Availability Zone #1 - must be available in your account and in the same region as AvailabilityZone2"
-    Default: "eu-west-1a"
-
-  AvailabilityZone2:
-    Type: "AWS::EC2::AvailabilityZone::Name"
-    Description: "Availability Zone #2 - must be available in your account and in the same region as AvailabilityZone1"
-    Default: "eu-west-1b"
+  ClusterStackName:
+    Type: String
+    Description: "Stack name responsible for VPC and EFS setup"
 
   InstanceType:
     Type: "String"
@@ -52,106 +46,34 @@ Parameters:
   ResourceNamePrefix:
     Type: "String"
     Description: "Naming prefix for created resources"
-    Default: "w-ats-ci-cloudformation-ecs"
+    Default: "w-ats-ci-cfn-ecs"
+
+  ECSCluster:
+    Type: "String"
+    Description: 'Fn::ImportValue: !Sub "${ClusterStackName}-ECSCluster"'
+    AllowedPattern: ".+"
+
+  ECSClusterSecurityGroup:
+    Type: "String"
+    Description: 'Fn::ImportValue: !Sub "${ClusterStackName}-ECSClusterSecurityGroup"'
+    AllowedPattern: ".+"
+
+  EFSFileSystem:
+    Type: "String"
+    Description: 'Fn::ImportValue: !Sub "${ClusterStackName}-EFSFileSystem"'
+    AllowedPattern: ".+"
+
+  VPC:
+    Type: "String"
+    Description: 'Fn::ImportValue: !Sub "${ClusterStackName}-VPC"'
+    AllowedPattern: ".+"
+
+  ClusterSubnetList:
+    Type: "List<AWS::EC2::Subnet::Id>"
+    Description: 'Fn::ImportValue: !Sub "${ClusterStackName}-ClusterSubnetList"'
 
 
 Resources:
-
-  VPC:
-    Type: "AWS::EC2::VPC"
-    Properties:
-      CidrBlock: "10.0.0.0/16"
-      EnableDnsSupport: true
-      EnableDnsHostnames: true
-      InstanceTenancy: "default"
-      Tags:
-        -
-          Key: "Name"
-          Value: !Sub "${ResourceNamePrefix}-vpc"
-
-  InternetGateway:
-    Type: "AWS::EC2::InternetGateway"
-    Properties:
-      Tags:
-        -
-          Key: "Name"
-          Value: !Sub "${ResourceNamePrefix}-vpc"
-
-  VPCGatewayAttachment:
-    Type: "AWS::EC2::VPCGatewayAttachment"
-    Properties:
-      InternetGatewayId: !Ref InternetGateway
-      VpcId: !Ref VPC
-
-  SubnetPublic1:
-    Type: "AWS::EC2::Subnet"
-    Properties:
-      AvailabilityZone: !Ref AvailabilityZone1
-      CidrBlock: "10.0.1.0/24"
-      MapPublicIpOnLaunch: true
-      VpcId: !Ref VPC
-      Tags:
-        -
-          Key: "Name"
-          Value: !Sub "${ResourceNamePrefix}-net-pub1"
-
-  SubnetPublic2:
-    Type: "AWS::EC2::Subnet"
-    Properties:
-      AvailabilityZone: !Ref AvailabilityZone2
-      CidrBlock: "10.0.2.0/24"
-      MapPublicIpOnLaunch: true
-      VpcId: !Ref VPC
-      Tags:
-        -
-          Key: "Name"
-          Value: !Sub "${ResourceNamePrefix}-net-pub2"
-
-  SubnetPublic1RouteTable:
-    Type: "AWS::EC2::RouteTable"
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        -
-          Key: "Name"
-          Value: !Sub "${ResourceNamePrefix}-net-pub1-rt"
-
-  SubnetPublic2RouteTable:
-    Type: "AWS::EC2::RouteTable"
-    Properties:
-      VpcId: !Ref VPC
-      Tags:
-        -
-          Key: "Name"
-          Value: !Sub "${ResourceNamePrefix}-net-pub1-rt"
-
-  SubnetPublic1Route:
-    Type: "AWS::EC2::Route"
-    Properties:
-      DestinationCidrBlock: "0.0.0.0/0"
-      GatewayId: !Ref InternetGateway
-      RouteTableId: !Ref SubnetPublic1RouteTable
-    DependsOn: "VPCGatewayAttachment"
-
-  SubnetPublic2Route:
-    Type: "AWS::EC2::Route"
-    Properties:
-      DestinationCidrBlock: "0.0.0.0/0"
-      GatewayId: !Ref InternetGateway
-      RouteTableId: !Ref SubnetPublic2RouteTable
-    DependsOn: "VPCGatewayAttachment"
-
-  SubnetPublic1RouteTableAssociation:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
-    Properties:
-      RouteTableId: !Ref SubnetPublic1RouteTable
-      SubnetId: !Ref SubnetPublic1
-
-  SubnetPublic2RouteTableAssociation:
-    Type: "AWS::EC2::SubnetRouteTableAssociation"
-    Properties:
-      RouteTableId: !Ref SubnetPublic2RouteTable
-      SubnetId: !Ref SubnetPublic2
 
   ECSAutoScalingGroup:
     Type: "AWS::AutoScaling::AutoScalingGroup"
@@ -164,8 +86,8 @@ Resources:
       MaxSize: 2
       MinSize: 2
       VPCZoneIdentifier:
-        - !Ref SubnetPublic1
-        - !Ref SubnetPublic2
+        - !Select [0, !Ref ClusterSubnetList]
+        - !Select [1, !Ref ClusterSubnetList]
       Tags:
         -
           Key: "Name"
@@ -235,30 +157,6 @@ Resources:
             yum:
               nfs-utils: []
 
-  ECSClusterSecurityGroup:
-    Type: "AWS::EC2::SecurityGroup"
-    Properties:
-      VpcId: !Ref VPC
-      GroupDescription: "Self-referencing security group to allow all traffic between ECS container instances and ELBs"
-
-  ECSClusterSecurityGroupEgress:
-    Type: "AWS::EC2::SecurityGroupEgress"
-    Properties:
-      DestinationSecurityGroupId: !Ref ECSClusterSecurityGroup
-      FromPort: "-1"
-      GroupId: !Ref ECSClusterSecurityGroup
-      IpProtocol: "-1"
-      ToPort: "-1"
-
-  ECSClusterSecurityGroupIngress:
-    Type: "AWS::EC2::SecurityGroupIngress"
-    Properties:
-      FromPort: "-1"
-      GroupId: !Ref ECSClusterSecurityGroup
-      IpProtocol: "-1"
-      SourceSecurityGroupId: !Ref ECSClusterSecurityGroup
-      ToPort: "-1"
-
   ECSContainerInstancesSecurityGroup:
     Type: "AWS::EC2::SecurityGroup"
     Properties:
@@ -270,46 +168,6 @@ Resources:
           FromPort: "22"
           ToPort: "22"
           CidrIp: !Ref PublicAccessCIDR
-
-  EFSMountTargetSecurityGroup:
-    Type: "AWS::EC2::SecurityGroup"
-    Properties:
-      VpcId: !Ref VPC
-      GroupDescription: "Security group to allow inbound NFS for EFS mount target from ECS container instances"
-      SecurityGroupIngress:
-        -
-          IpProtocol: "tcp"
-          FromPort: "2049"
-          ToPort: "2049"
-          SourceSecurityGroupId: !Ref ECSContainerInstancesSecurityGroup
-
-  ECSCluster:
-    Type: "AWS::ECS::Cluster"
-
-  EFSFileSystem:
-    Type: "AWS::EFS::FileSystem"
-    Properties:
-      FileSystemTags:
-        -
-          Key: "Name"
-          Value: !Ref ECSCluster
-      PerformanceMode: "generalPurpose"
-
-  EFSMountTarget1:
-    Type: "AWS::EFS::MountTarget"
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      SecurityGroups:
-        - !Ref EFSMountTargetSecurityGroup
-      SubnetId: !Ref SubnetPublic1
-
-  EFSMountTarget2:
-    Type: "AWS::EFS::MountTarget"
-    Properties:
-      FileSystemId: !Ref EFSFileSystem
-      SecurityGroups:
-        - !Ref EFSMountTargetSecurityGroup
-      SubnetId: !Ref SubnetPublic2
 
   ECSInstanceProfile:
     Type: "AWS::IAM::InstanceProfile"
@@ -374,8 +232,8 @@ Resources:
                 Action:
                   - "ecs:ListContainerInstances"
                   - "ecs:StopTask"
-                Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ECSCluster}"
-              -
+                Resource: !Sub
+                       - "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:cluster/${ECSCluster}"
                 Effect: "Allow"
                 Action:
                   - "ecs:StopTask"
@@ -412,9 +270,10 @@ Resources:
   JenkinsLoadBalancer:
     Type: "AWS::ElasticLoadBalancing::LoadBalancer"
     Properties:
+      LoadBalancerName: "jenkins-internal-ecs-elb"
       Subnets:
-        - !Ref SubnetPublic1
-        - !Ref SubnetPublic2
+        - !Select [0, !Ref ClusterSubnetList]
+        - !Select [1, !Ref ClusterSubnetList]
       Scheme: "internal"
       SecurityGroups:
         - !Ref ECSClusterSecurityGroup
@@ -451,9 +310,10 @@ Resources:
   ProxyLoadBalancer:
     Type: "AWS::ElasticLoadBalancing::LoadBalancer"
     Properties:
+      LoadBalancerName: "jenkins-external-ecs-elb"
       Subnets:
-        - !Ref SubnetPublic1
-        - !Ref SubnetPublic2
+        - !Select [0, !Ref ClusterSubnetList]
+        - !Select [1, !Ref ClusterSubnetList]
       SecurityGroups:
         - !Ref ECSClusterSecurityGroup
         - !Ref ProxyELBSecurityGroup
@@ -482,6 +342,7 @@ Resources:
           LoadBalancerName: !Ref JenkinsLoadBalancer
       Role: !Ref ECSServiceRole
       TaskDefinition: !Ref JenkinsTaskDefinition
+
   JenkinsTaskDefinition:
     Type: "AWS::ECS::TaskDefinition"
     Properties:
@@ -553,7 +414,6 @@ Resources:
           Host:
             SourcePath: "/etc/nginx/nginx.conf"
 
-
 Outputs:
   JenkinsConfigurationAlternativeJenkinsURL:
     Description: "Jenkins configuration: \"Alternative Jenkins URL\""
@@ -568,4 +428,3 @@ Outputs:
     Value: !Sub
         - "http://${JenkinsDnsName}/"
         - { JenkinsDnsName: !GetAtt ProxyLoadBalancer.DNSName }
-

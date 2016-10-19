@@ -1,0 +1,239 @@
+---
+AWSTemplateFormatVersion: "2010-09-09"
+Description: |
+  Template to setup Jenkins stack basement (VPC, EFS, ECS Cluster)
+
+
+Parameters:
+
+  Region:
+    Type: String
+    Default: "eu-west-1"
+
+  AvailabilityZone1:
+    Type: "AWS::EC2::AvailabilityZone::Name"
+    Description: "Availability Zone #1 - must be available in your account and in the same region as AvailabilityZone2"
+    Default: "eu-west-1a"
+
+  AvailabilityZone2:
+    Type: "AWS::EC2::AvailabilityZone::Name"
+    Description: "Availability Zone #2 - must be available in your account and in the same region as AvailabilityZone1"
+    Default: "eu-west-1b"
+
+  ResourceNamePrefix:
+    Type: "String"
+    Description: "Naming prefix for created resources"
+    Default: "w-ats-ci-cfn-ecs"
+
+
+Resources:
+
+  VPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: "default"
+      Tags:
+        -
+          Key: "Name"
+          Value: !Sub "${ResourceNamePrefix}-vpc"
+
+  InternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        -
+          Key: "Name"
+          Value: !Sub "${ResourceNamePrefix}-vpc"
+
+  VPCGatewayAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  SubnetPublic1:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone1
+      CidrBlock: "10.0.1.0/24"
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPC
+      Tags:
+        -
+          Key: "Name"
+          Value: !Sub "${ResourceNamePrefix}-net-pub1"
+
+  SubnetPublic2:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      AvailabilityZone: !Ref AvailabilityZone2
+      CidrBlock: "10.0.2.0/24"
+      MapPublicIpOnLaunch: true
+      VpcId: !Ref VPC
+      Tags:
+        -
+          Key: "Name"
+          Value: !Sub "${ResourceNamePrefix}-net-pub2"
+
+  SubnetPublic1RouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        -
+          Key: "Name"
+          Value: !Sub "${ResourceNamePrefix}-net-pub1-rt"
+
+  SubnetPublic2RouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        -
+          Key: "Name"
+          Value: !Sub "${ResourceNamePrefix}-net-pub1-rt"
+
+  SubnetPublic1Route:
+    Type: "AWS::EC2::Route"
+    Properties:
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref SubnetPublic1RouteTable
+    DependsOn: "VPCGatewayAttachment"
+
+  SubnetPublic2Route:
+    Type: "AWS::EC2::Route"
+    Properties:
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref SubnetPublic2RouteTable
+    DependsOn: "VPCGatewayAttachment"
+
+  SubnetPublic1RouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      RouteTableId: !Ref SubnetPublic1RouteTable
+      SubnetId: !Ref SubnetPublic1
+
+  SubnetPublic2RouteTableAssociation:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      RouteTableId: !Ref SubnetPublic2RouteTable
+      SubnetId: !Ref SubnetPublic2
+
+  ECSCluster:
+    Type: "AWS::ECS::Cluster"
+
+  ECSClusterSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: "Self-referencing security group to allow all traffic between ECS container instances and ELBs"
+
+  ECSClusterSecurityGroupEgress:
+    Type: "AWS::EC2::SecurityGroupEgress"
+    Properties:
+      DestinationSecurityGroupId: !Ref ECSClusterSecurityGroup
+      FromPort: "-1"
+      GroupId: !Ref ECSClusterSecurityGroup
+      IpProtocol: "-1"
+      ToPort: "-1"
+
+  ECSClusterSecurityGroupIngress:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      FromPort: "-1"
+      GroupId: !Ref ECSClusterSecurityGroup
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref ECSClusterSecurityGroup
+      ToPort: "-1"
+
+  EFSMountTargetSecurityGroup:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      VpcId: !Ref VPC
+      GroupDescription: "Security group to allow inbound NFS for EFS mount target from ECS container instances"
+      SecurityGroupIngress:
+        -
+          IpProtocol: "tcp"
+          FromPort: "2049"
+          ToPort: "2049"
+          CidrIp: !GetAtt VPC.CidrBlock
+
+  EFSFileSystem:
+    Type: "AWS::EFS::FileSystem"
+    Properties:
+      FileSystemTags:
+        -
+          Key: "Name"
+          Value: !Ref ECSCluster
+      PerformanceMode: "generalPurpose"
+
+  EFSMountTarget1:
+    Type: "AWS::EFS::MountTarget"
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SecurityGroups:
+        - !Ref EFSMountTargetSecurityGroup
+      SubnetId: !Ref SubnetPublic1
+
+  EFSMountTarget2:
+    Type: "AWS::EFS::MountTarget"
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SecurityGroups:
+        - !Ref EFSMountTargetSecurityGroup
+      SubnetId: !Ref SubnetPublic2
+
+Outputs:
+
+  ResourceNamePrefix:
+    Description: Common prefix for all resources stack-related
+    Value : !Ref ResourceNamePrefix
+    Export:
+      Name: !Sub "${AWS::StackName}-ResourceNamePrefix"
+
+  VPC:
+    Description: VPC ID
+    Value : !Ref VPC
+    Export:
+      Name: !Sub "${AWS::StackName}-VPC"
+
+  ClusterSubnetList:
+    Description: Subnet list for ECS Instances
+    Value : !Sub "${SubnetPublic1}, ${SubnetPublic2}"
+    Export:
+      Name: !Sub "${AWS::StackName}-SubnetList"
+
+  EFSFileSystem:
+    Description: EFS logical ID
+    Value: !Ref EFSFileSystem
+    Export:
+      Name: !Sub "${AWS::StackName}-EFSFileSystem"
+
+  EFSMountPointZoneA:
+    Description: EFS mount target in AZ a
+    Value: !Sub "eu-west-1a.${EFSFileSystem}.efs.eu-west-1.amazonaws.com"
+    Export:
+      Name: !Sub "${AWS::StackName}-EFSMountPointZoneA"
+
+  EFSMountPointZoneB:
+    Description: EFS mount target in AZ b
+    Value: !Sub "eu-west-1b.${EFSFileSystem}.efs.eu-west-1.amazonaws.com"
+    Export:
+      Name: !Sub "${AWS::StackName}-EFSMountPointZoneB"
+
+  ECSCluster:
+    Description: ECS Cluster ID
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub "${AWS::StackName}-ECSCluster"
+
+  ECSClusterSecurityGroup:
+    Description: ECS Cluster Security group
+    Value: !Ref ECSClusterSecurityGroup
+    Export:
+      Name: !Sub "${AWS::StackName}-ECSClusterSecurityGroup"
