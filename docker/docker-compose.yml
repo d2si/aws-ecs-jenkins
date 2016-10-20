@@ -1,0 +1,19 @@
+version: "2"
+
+services:
+  jenkins:
+    build: ./jenkins
+    image: d2si/jenkins
+    container_name: jenkins
+    ports:
+      - "8080:8080"
+    environment:
+      - "JAVA_OPTS=-Djenkins.install.runSetupWizard=false"
+
+  config:
+    build: ./cfg_jenkins
+    image: d2si/cfg_jenkins
+    depends_on:
+      - jenkins
+    environment:
+      - "ADMIN_PASSWORD=$ADMIN_PASSWORD"
