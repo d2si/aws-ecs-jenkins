@@ -72,6 +72,21 @@ Parameters:
     Type: "List<AWS::EC2::Subnet::Id>"
     Description: 'Fn::ImportValue: !Sub "${ClusterStackName}-ClusterSubnetList"'
 
+  ECSJenkinsServiceCount:
+    Type: "Number"
+    Description: "Number of tasks ensured running by ECS Jenkins Service"
+    Default: 1
+
+  ECSProxyServiceCount:
+    Type: "Number"
+    Description: "Number of tasks ensured running by ECS Proxy Service"
+    Default: 1
+
+  ASGDesiredInstances:
+    Type: "Number"
+    Description: "Number of instances running in the ECS Autoscaling Group"
+    Default: 2
+
 
 Resources:
 
@@ -81,10 +96,10 @@ Resources:
       ResourceSignal:
         Timeout: "PT5M"
     Properties:
-      DesiredCapacity: 2
+      DesiredCapacity: !Ref ASGDesiredInstances
       LaunchConfigurationName: !Ref ECSLaunchConfig
-      MaxSize: 2
-      MinSize: 2
+      MaxSize: 10
+      MinSize: 0
       VPCZoneIdentifier:
         - !Select [0, !Ref ClusterSubnetList]
         - !Select [1, !Ref ClusterSubnetList]
@@ -335,7 +350,7 @@ Resources:
     Type: "AWS::ECS::Service"
     Properties:
       Cluster: !Ref ECSCluster
-      DesiredCount: 1
+      DesiredCount: !Ref ECSJenkinsServiceCount
       LoadBalancers:
         -
           ContainerName: "jenkins"
@@ -380,7 +395,7 @@ Resources:
     Type: "AWS::ECS::Service"
     Properties:
       Cluster: !Ref ECSCluster
-      DesiredCount: 1
+      DesiredCount: !Ref ECSProxyServiceCount
       LoadBalancers:
         -
           ContainerName: "nginx"
@@ -414,6 +429,7 @@ Resources:
           Name: "nginx-conf"
           Host:
             SourcePath: "/etc/nginx/nginx.conf"
+
 
 Outputs:
   JenkinsConfigurationAlternativeJenkinsURL:
