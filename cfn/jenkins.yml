@@ -202,6 +202,7 @@ Resources:
                   - "ecs:DiscoverPollEndpoint"
                   - "ecs:Poll"
                   - "ecs:RegisterContainerInstance"
+                  - "ecs:ListContainerInstances"
                   - "ecs:StartTelemetrySession"
                   - "ecs:Submit*"
                   - "ecr:GetAuthorizationToken"
